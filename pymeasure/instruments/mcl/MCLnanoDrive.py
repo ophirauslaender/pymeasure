@@ -25,13 +25,17 @@
 import ctypes
 
 import time
-import subprocess
 
 import logging
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 from pymeasure.instruments import Instrument
+
+class ProductInformation(ctypes.Structure):
+    _fields_ = [("axis_bitmap", ctypes.c_uint),
+                ("FirmwareProfile", ctypes.c_uint),
+                ("Product_id", ctypes.c_uint)]
 
 class MCLnanoDrive(Instrument):
     """Control a MCL (Mad City Labs) Nano-Drive."""
@@ -46,17 +50,48 @@ class MCLnanoDrive(Instrument):
         self.axis_mapping = {1: 'X', 2: 'Y', 3: 'Z'}
 
         instrument_dll = ctypes.CDLL("C:/Program Files/Mad City Labs/NanoDrive/Madlib.dll")
+        
+        # Function prototype for MCL_InitHandle
+        MCL_InitHandle = instrument_dll.MCL_InitHandle
+        MCL_InitHandle.argtypes = []
+        MCL_InitHandle.restype = ctypes.c_int
 
-        self.handle = instrument_dll.MCL_InitHandle()
+        # Function prototype for MCL_PrintDeviceInfo
+        MCL_PrintDeviceInfo = instrument_dll.MCL_PrintDeviceInfo
+        MCL_PrintDeviceInfo.argtypes = [ctypes.c_int]
+        MCL_PrintDeviceInfo.restype = None
+
+        # Function prototype for MCL_GetProductInfo
+        MCL_GetProductInfo = instrument_dll.MCL_GetProductInfo
+        MCL_GetProductInfo.argtypes = [ctypes.POINTER(ProductInformation), ctypes.c_int]
+        MCL_GetProductInfo.restype = None
+
+        # Function prototype for MCL_SingleReadN
+        MCL_SingleReadN = instrument_dll.MCL_SingleReadN
+        MCL_SingleReadN.argtypes = [ctypes.c_uint, ctypes.c_int]
+        MCL_SingleReadN.restype = ctypes.c_double
+
+        # Function prototype for MCL_GetCalibration
+        MCL_GetCalibration = instrument_dll.MCL_GetCalibration
+        MCL_GetCalibration.argtypes = [ctypes.c_uint, ctypes.c_int]
+        MCL_GetCalibration.restype = ctypes.c_double
+
+        # Function prototype for MCL_ReleaseHandle
+        MCL_ReleaseHandle = instrument_dll.MCL_ReleaseHandle
+        MCL_ReleaseHandle.argtypes = [ctypes.c_int]
+        MCL_ReleaseHandle.restype = None        
+
+        self.handle = MCL_InitHandle()
 
         log.info(f"MCL handle initialized: {self.handle}")
-        log.info(f'Serial Number: {instrument_dll.MCL_GetSerialNumber(self.handle)}')
+#        log.info(f'Serial Number: {MCL_GetSerialNumber(self.handle)}')
 
-        for i_, ax_ in self.axis_mapping.items():
-            print(f'Axis {ax_} Calibration: {float(instrument_dll.MCL_GetCalibration(i_, self.handle))}')
+#        for i_, ax_ in self.axis_mapping.items():
+#               print(f'Axis {ax_} Calibration: {float(MCL_GetCalibration(i_, self.handle))}')
           
 
-        instrument_dll.MCL_PrintDeviceInfo(self.handle)
+        MCL_PrintDeviceInfo(self.handle)
+
 
 
 
