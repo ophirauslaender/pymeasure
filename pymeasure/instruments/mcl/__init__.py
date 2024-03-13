@@ -22,4 +22,4 @@
 # THE SOFTWARE.
 #
 
-from .MCLnanoDrive import MCLnanoDrive
+from .mclnanodrive import MCLnanoDrive
