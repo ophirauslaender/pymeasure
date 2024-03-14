@@ -44,9 +44,7 @@ class ThorlabsKPZ101(Instrument):
     """
     Represents Thorlabs KPZ101 piezo controller and provides a high-level interface for
     interacting with the instrument.
-
-
-
+    
     .. code-block:: python
 
         thorlabs = ThorlabsKPZ101({'serial_number': str(12345678)}, max_voltage='low', includeSCPI=False)
@@ -128,6 +126,7 @@ class ThorlabsKPZ101(Instrument):
                 self._voltage = float(str(self.device.GetOutputVoltage()))
         else:
             raise ValueError(f'Voltage must be between {self.min_volt} and {self.max_volt} V')
+    
     @property
     def id(self):
         return self.device_info.Description

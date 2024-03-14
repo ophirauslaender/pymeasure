@@ -32,10 +32,14 @@ log.addHandler(logging.NullHandler())
 
 from pymeasure.instruments import Instrument
 
-class ProductInformation(ctypes.Structure):
-    _fields_ = [("axis_bitmap", ctypes.c_uint),
-                ("FirmwareProfile", ctypes.c_uint),
-                ("Product_id", ctypes.c_uint)]
+class ProductInfo(ctypes.Structure):
+        _fields_ = [("axis_bitmap", ctypes.c_ubyte),
+                    ("ADC_resolution", ctypes.c_short),
+                    ("DAC_resolution", ctypes.c_short),
+                    ("Product_id", ctypes.c_short),
+                    ("FirmwareVersion", ctypes.c_short),
+                    ("FirmwareProfile", ctypes.c_short)]
+        _pack_ = 1 # this is how it is packed in the Madlib dll
 
 class MCLnanoDrive(Instrument):
     """Control a MCL (Mad City Labs) Nano-Drive."""
@@ -48,51 +52,77 @@ class MCLnanoDrive(Instrument):
         )
 
         self.axis_mapping = {1: 'X', 2: 'Y', 3: 'Z'}
+        self.calibration = {}
+        self._position = {}
+        self.mcl_error_codes = { 0: 'MCL_SUCCESS',
+                                -1: 'MCL_GENERAL_ERROR',
+                                -2: 'MCL_DEV_ERROR',
+                                -3: 'MCL_DEV_NOT_ATTACHED',
+                                -4: 'MCL_USAGE_ERROR',
+                                -5: 'MCL_DEV_NOT_READY',
+                                -6: 'MCL_ARGUMENT_ERROR',
+                                -7: 'MCL_INVALID_AXIS',
+                                -8: 'MCL_INVALID_HANDLE'}
 
-        instrument_dll = ctypes.CDLL("C:/Program Files/Mad City Labs/NanoDrive/Madlib.dll")
-        
+        self.mcldll = ctypes.CDLL("C:/Program Files/Mad City Labs/NanoDrive/Madlib.dll")
+
         # Function prototype for MCL_InitHandle
-        MCL_InitHandle = instrument_dll.MCL_InitHandle
+        MCL_InitHandle = self.mcldll.MCL_InitHandle     
         MCL_InitHandle.argtypes = []
         MCL_InitHandle.restype = ctypes.c_int
 
-        # Function prototype for MCL_PrintDeviceInfo
-        MCL_PrintDeviceInfo = instrument_dll.MCL_PrintDeviceInfo
-        MCL_PrintDeviceInfo.argtypes = [ctypes.c_int]
-        MCL_PrintDeviceInfo.restype = None
-
-        # Function prototype for MCL_GetProductInfo
-        MCL_GetProductInfo = instrument_dll.MCL_GetProductInfo
-        MCL_GetProductInfo.argtypes = [ctypes.POINTER(ProductInformation), ctypes.c_int]
-        MCL_GetProductInfo.restype = None
-
-        # Function prototype for MCL_SingleReadN
-        MCL_SingleReadN = instrument_dll.MCL_SingleReadN
-        MCL_SingleReadN.argtypes = [ctypes.c_uint, ctypes.c_int]
-        MCL_SingleReadN.restype = ctypes.c_double
-
         # Function prototype for MCL_GetCalibration
-        MCL_GetCalibration = instrument_dll.MCL_GetCalibration
+        MCL_GetCalibration = self.mcldll.MCL_GetCalibration
         MCL_GetCalibration.argtypes = [ctypes.c_uint, ctypes.c_int]
         MCL_GetCalibration.restype = ctypes.c_double
 
-        # Function prototype for MCL_ReleaseHandle
-        MCL_ReleaseHandle = instrument_dll.MCL_ReleaseHandle
-        MCL_ReleaseHandle.argtypes = [ctypes.c_int]
-        MCL_ReleaseHandle.restype = None        
-
         self.handle = MCL_InitHandle()
 
-        log.info(f"MCL handle initialized: {self.handle}")
-#        log.info(f'Serial Number: {MCL_GetSerialNumber(self.handle)}')
+        log.info(f"MCL handle initialized: handle = {self.handle}")
 
-#        for i_, ax_ in self.axis_mapping.items():
-#               print(f'Axis {ax_} Calibration: {float(MCL_GetCalibration(i_, self.handle))}')
-          
+        pi = ProductInfo()
+        ppi = ctypes.pointer(pi)
 
-        MCL_PrintDeviceInfo(self.handle)
+        err = self.mcldll.MCL_GetProductInfo(ppi, self.handle)
+        if err != 0:
+            log.info(f"Error: NanoDrive could not get productInformation. Error Code: {err} = {self.mcl_error_codes[err]}")
+            log.info("Exiting")
+            self.disconnect()
+            return
+        else:
+            log.info("Information about the NanoDrive:")
+#            log.info(f"axis bitmap: {pi.axis_bitmap}")
+            log.info(f"ADC resolution: {pi.ADC_resolution}")
+            log.info(f"DAC resolution: {pi.DAC_resolution}")
+            log.info(f"Product ID: {pi.Product_id}")
+            log.info(f"Firmware Version {pi.FirmwareVersion}")
+            log.info(f"Firmware Profile {pi.FirmwareProfile}")
+            for i_, ax_ in self.axis_mapping.items():
+                self.calibration[i_] = self.mcldll.MCL_GetCalibration(i_, self.handle)
+                log.info(f"Calibration is on axis {ax_} is {self.calibration[i_]} μm / volt")
+            self._position = self.position
+            log.info(f"Initial position: {self._position}")
 
+    def disconnect(self):
+        # Function prototype for MCL_ReleaseHandle
+        MCL_ReleaseHandle = self.mcldll.MCL_ReleaseHandle
+        MCL_ReleaseHandle.argtypes = [ctypes.c_int]
+        MCL_ReleaseHandle.restype = None
 
+        self.mcldll.MCL_ReleaseHandle(self.handle) # be sure to release handle anytime before returning
+
+    @property
+    def position(self):
+         
+        # Function prototype for MCL_SingleReadN
+        MCL_SingleReadN = self.mcldll.MCL_SingleReadN
+        MCL_SingleReadN.argtypes = [ctypes.c_uint, ctypes.c_int]
+        MCL_SingleReadN.restype = ctypes.c_double
+
+        for i_ in self.axis_mapping.keys():
+            self._position[i_] = MCL_SingleReadN(i_, self.handle)
+        
+        return self._position
 
 
 
