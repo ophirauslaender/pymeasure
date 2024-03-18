@@ -101,6 +101,7 @@ class MCLnanoDrive(Instrument):
                 self.calibration[i_] = self.mcldll.MCL_GetCalibration(i_, self.handle)
                 log.info(f"Calibration is on axis {ax_} is {self.calibration[i_]} μm / volt")
             self._position = self.position
+            print(self._position)
             log.info(f"Initial position: {self._position}")
 
     def disconnect(self):
@@ -111,8 +112,9 @@ class MCLnanoDrive(Instrument):
 
         self.mcldll.MCL_ReleaseHandle(self.handle) # be sure to release handle anytime before returning
 
+################################################################
     @property
-    def position(self):
+    def position(self,):
          
         # Function prototype for MCL_SingleReadN
         MCL_SingleReadN = self.mcldll.MCL_SingleReadN
@@ -122,7 +124,25 @@ class MCLnanoDrive(Instrument):
         for i_ in self.axis_mapping.keys():
             self._position[i_] = MCL_SingleReadN(i_, self.handle)
         
-        return self._position
+        return self._position # this is a list
+    
+    @position.setter
+    def position(self, value, i_axis):
+        tol = 0.01 # position tolerance
+        if self.min_pos[i_axis-1] <= float(value) <= self.max_pos[i_axis-1]:
+            MCL_SingleWriteN = self.mcldll.MCL_SingleWriteN
+            MCL_SingleWriteN.argtypes = [ctypes.c_double, ctypes.c_uint, ctypes.c_int]
+            MCL_SingleWriteN.restype = ctypes.c_int
 
+            MCL_SingleWriteN(ctypes.c_double(value), i_axis, self.handle)
+
+            while (abs(value - self._position[i_axis]) > tol):
+                time.sleep(0.01)
+                self._position = self.position
+        else:
+            raise ValueError(f'Position must be between {self.min_pos} and {self.max_pos} μm')
+################################################################
+
+        
 
 
