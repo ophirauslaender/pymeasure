@@ -66,43 +66,52 @@ class MCLnanoDrive(Instrument):
 
         self.mcldll = ctypes.CDLL("C:/Program Files/Mad City Labs/NanoDrive/Madlib.dll")
 
-        # Function prototype for MCL_InitHandle
-        MCL_InitHandle = self.mcldll.MCL_InitHandle     
-        MCL_InitHandle.argtypes = []
-        MCL_InitHandle.restype = ctypes.c_int
+        # # Function prototype for MCL_InitHandle
+        # MCL_InitHandle = self.mcldll.MCL_InitHandle     
+        # MCL_InitHandle.argtypes = []
+        # MCL_InitHandle.restype = ctypes.c_int
+
+        # Function prototype for MCL_InitHandleOrGetExisting
+        MCL_InitHandleOrGetExisting = self.mcldll.MCL_InitHandleOrGetExisting     
+        MCL_InitHandleOrGetExisting.argtypes = []
+        MCL_InitHandleOrGetExisting.restype = ctypes.c_int
 
         # Function prototype for MCL_GetCalibration
         MCL_GetCalibration = self.mcldll.MCL_GetCalibration
         MCL_GetCalibration.argtypes = [ctypes.c_uint, ctypes.c_int]
         MCL_GetCalibration.restype = ctypes.c_double
 
-        self.handle = MCL_InitHandle()
+        self.handle = MCL_InitHandleOrGetExisting() # this is better than MCL_InitHandle because it can handle an unreleased instance.
 
-        log.info(f"MCL handle initialized: handle = {self.handle}")
-
-        pi = ProductInfo()
-        ppi = ctypes.pointer(pi)
-
-        err = self.mcldll.MCL_GetProductInfo(ppi, self.handle)
-        if err != 0:
-            log.info(f"Error: NanoDrive could not get productInformation. Error Code: {err} = {self.mcl_error_codes[err]}")
-            log.info("Exiting")
-            self.disconnect()
+        if self.handle == 0:
+            log.warning(f"Error: NanoDrive could not initialize handle..... Exiting")
             return
         else:
-            log.info("Information about the NanoDrive:")
-#            log.info(f"axis bitmap: {pi.axis_bitmap}")
-            log.info(f"ADC resolution: {pi.ADC_resolution}")
-            log.info(f"DAC resolution: {pi.DAC_resolution}")
-            log.info(f"Product ID: {pi.Product_id}")
-            log.info(f"Firmware Version {pi.FirmwareVersion}")
-            log.info(f"Firmware Profile {pi.FirmwareProfile}")
-            for i_, ax_ in self.axis_mapping.items():
-                self.calibration[i_] = self.mcldll.MCL_GetCalibration(i_, self.handle)
-                log.info(f"Calibration is on axis {ax_} is {self.calibration[i_]} μm / volt")
-                self.position[i_] = self.get_position(i_)
-            # print(self._position)
-            log.info(f"Initial position: {self.position}")
+            log.info(f"MCL handle initialized: handle = {self.handle}")
+
+            pi = ProductInfo()
+            ppi = ctypes.pointer(pi)
+
+            err = self.mcldll.MCL_GetProductInfo(ppi, self.handle)
+            if err != 0:
+                log.info(f"Error: NanoDrive could not get productInformation. Error Code: {err} = {self.mcl_error_codes[err]}")
+                log.info("Exiting")
+                self.disconnect()
+                return
+            else:
+                log.info("Information about the NanoDrive:")
+    #            log.info(f"axis bitmap: {pi.axis_bitmap}")
+                log.info(f"ADC resolution: {pi.ADC_resolution}")
+                log.info(f"DAC resolution: {pi.DAC_resolution}")
+                log.info(f"Product ID: {pi.Product_id}")
+                log.info(f"Firmware Version {pi.FirmwareVersion}")
+                log.info(f"Firmware Profile {pi.FirmwareProfile}")
+                for i_, ax_ in self.axis_mapping.items():
+                    self.calibration[i_] = self.mcldll.MCL_GetCalibration(i_, self.handle)
+                    log.info(f"Calibration is on axis {ax_} is {self.calibration[i_]} μm / volt")
+                    self.position[i_] = self.get_position(i_)
+                # print(self._position)
+                log.info(f"Initial position: {self.position}")
 
     def disconnect(self):
         # Function prototype for MCL_ReleaseHandle
@@ -111,6 +120,8 @@ class MCLnanoDrive(Instrument):
         MCL_ReleaseHandle.restype = None
 
         self.mcldll.MCL_ReleaseHandle(self.handle) # be sure to release handle anytime before returning
+        log.info(f"Finished disconnecting down {self.name}")
+
 
 ################################################################
     def get_position(self, i_axis):
@@ -126,16 +137,42 @@ class MCLnanoDrive(Instrument):
         MCL_SingleWriteN = self.mcldll.MCL_SingleWriteN
         MCL_SingleWriteN.argtypes = [ctypes.c_double, ctypes.c_uint, ctypes.c_int]
         MCL_SingleWriteN.restype = ctypes.c_int
-
         if not 0 <= float(new_position) <= self.calibration[i_axis]:
             raise ValueError(f'Position must be between 0 and {self.calibration[i_axis]} μm')
         else:
             err = MCL_SingleWriteN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+            if err != 0:
+                log.info(f"Error: NanoDrive could not set position. Error Code: {err} = {self.mcl_error_codes[err]}")
             while (abs(new_position - self.position[i_axis]) > tol):
                 time.sleep(0.01)
                 self.position[i_axis] = self.get_position(i_axis)
             
             return err
+        
+    def set_verify_position(self, i_axis, new_position, tol=0.02):
+        MCL_MonitorN = self.mcldll.MCL_MonitorN
+        MCL_MonitorN.argtypes = [ctypes.c_double, ctypes.c_uint, ctypes.c_int]
+        MCL_MonitorN.restype = ctypes.c_double
+        if not 0 <= float(new_position) <= self.calibration[i_axis]:
+            raise ValueError(f'Position must be between 0 and {self.calibration[i_axis]} μm')
+        else:
+            pos_err = MCL_MonitorN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+            if pos_err < 0:
+                log.warning(f"Error: NanoDrive could not set position. Error Code: {pos_err} = {self.mcl_error_codes[int(pos_err)]}")
+                return pos_err
+            else:
+                self.position[i_axis] = pos_err
+                while (abs(new_position - pos_err) > tol):
+                    time.sleep(0.001)
+                    #print(f"new_position = {new_position}, pos_err = {pos_err}")
+                    pos_err = MCL_MonitorN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+                    if pos_err < 0:
+                        log.warning(f"Error: NanoDrive could not set position. Error Code: {pos_err} = {self.mcl_error_codes[int(pos_err)]}")
+                        return pos_err
+                    else:
+                        self.position[i_axis] = pos_err
+                
+            
 ################################################################
 
         
