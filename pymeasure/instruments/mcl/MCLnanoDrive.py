@@ -25,6 +25,7 @@
 import ctypes
 
 import time
+import numpy as np
 
 import logging
 log = logging.getLogger(__name__)
@@ -54,34 +55,32 @@ class MCLnanoDrive(Instrument):
         self.axis_mapping = {1: 'X', 2: 'Y', 3: 'Z'}
         self.calibration = {}
         self.position = {}
-        self.mcl_error_codes = { 0: 'MCL_SUCCESS',
-                                -1: 'MCL_GENERAL_ERROR',
-                                -2: 'MCL_DEV_ERROR',
-                                -3: 'MCL_DEV_NOT_ATTACHED',
-                                -4: 'MCL_USAGE_ERROR',
-                                -5: 'MCL_DEV_NOT_READY',
-                                -6: 'MCL_ARGUMENT_ERROR',
-                                -7: 'MCL_INVALID_AXIS',
-                                -8: 'MCL_INVALID_HANDLE'}
+        self.tolerance = {1: 0.0125, 2: 0.05, 3: 0.025}
+        self.offsets = {1: 0.06, 2: 0.03, 3: 0.02}
+
+
+        self.mcl_error_codes = {
+            0: '(0) MCL_SUCCESS',
+            -1: '(-1) MCL_GENERAL_ERROR:\n-- generally occurs due to an internal sanity check failing.',
+            -2: '(-2) MCL_DEV_ERROR:\n-- problem occurred when transferring data to the Nano-Drive.  It is likely that Nano-Drive will have to be 	 power cycled to correct these errors.',
+            -3: '(-3) MCL_DEV_NOT_ATTACHED:\n-- Nano-Drive not attached.',
+            -4: '(-4) MCL_USAGE_ERROR:\n-- Using a function from the library which the Nano-Drive does not support.',
+            -5: '(-5) MCL_DEV_NOT_READY:\n-- Nano-Drive currently completing or waiting to complete another task.',
+            -6: '(-6) MCL_ARGUMENT_ERROR:\n-- argument is out of range or a required pointer is equal to NULL.',
+            -7: '(-7) MCL_INVALID_AXIS:\n-- Attempting an operation on an axis that does not exist in the Nano-Drive.',
+            -8: '(-8) MCL_INVALID_HANDLE:\n-- The handle is not valid in this instance of the DLL.'
+            }
 
         self.mcldll = ctypes.CDLL("C:/Program Files/Mad City Labs/NanoDrive/Madlib.dll")
 
-        # # Function prototype for MCL_InitHandle
-        # MCL_InitHandle = self.mcldll.MCL_InitHandle     
-        # MCL_InitHandle.argtypes = []
-        # MCL_InitHandle.restype = ctypes.c_int
 
-        # Function prototype for MCL_InitHandleOrGetExisting
-        MCL_InitHandleOrGetExisting = self.mcldll.MCL_InitHandleOrGetExisting     
-        MCL_InitHandleOrGetExisting.argtypes = []
-        MCL_InitHandleOrGetExisting.restype = ctypes.c_int
+        self.mcldll.MCL_InitHandleOrGetExisting.restype = ctypes.c_int
+        self.handle = self.mcldll.MCL_InitHandleOrGetExisting() # this is better than MCL_InitHandle because it can handle an unreleased instance.
 
-        # Function prototype for MCL_GetCalibration
-        MCL_GetCalibration = self.mcldll.MCL_GetCalibration
-        MCL_GetCalibration.argtypes = [ctypes.c_uint, ctypes.c_int]
-        MCL_GetCalibration.restype = ctypes.c_double
-
-        self.handle = MCL_InitHandleOrGetExisting() # this is better than MCL_InitHandle because it can handle an unreleased instance.
+        self.mcldll.MCL_GetCalibration.restype = ctypes.c_double
+        self.mcldll.MCL_SingleReadN.restype = ctypes.c_double
+        self.mcldll.MCL_SingleWriteN.restype = ctypes.c_int
+        self.mcldll.MCL_MonitorN.restype = ctypes.c_double
 
         if self.handle == 0:
             log.warning(f"Error: NanoDrive could not initialize handle..... Exiting")
@@ -100,7 +99,6 @@ class MCLnanoDrive(Instrument):
                 return
             else:
                 log.info("Information about the NanoDrive:")
-    #            log.info(f"axis bitmap: {pi.axis_bitmap}")
                 log.info(f"ADC resolution: {pi.ADC_resolution}")
                 log.info(f"DAC resolution: {pi.DAC_resolution}")
                 log.info(f"Product ID: {pi.Product_id}")
@@ -110,69 +108,76 @@ class MCLnanoDrive(Instrument):
                     self.calibration[i_] = self.mcldll.MCL_GetCalibration(i_, self.handle)
                     log.info(f"Calibration is on axis {ax_} is {self.calibration[i_]} μm / volt")
                     self.position[i_] = self.get_position(i_)
-                # print(self._position)
-                log.info(f"Initial position: {self.position}")
+                log.info(f"Initial position: {self.position} μm")
 
     def disconnect(self):
-        # Function prototype for MCL_ReleaseHandle
-        MCL_ReleaseHandle = self.mcldll.MCL_ReleaseHandle
-        MCL_ReleaseHandle.argtypes = [ctypes.c_int]
-        MCL_ReleaseHandle.restype = None
-
         self.mcldll.MCL_ReleaseHandle(self.handle) # be sure to release handle anytime before returning
         log.info(f"Finished disconnecting down {self.name}")
 
 
 ################################################################
-    def get_position(self, i_axis):
-        # Function prototype for MCL_SingleReadN
-        MCL_SingleReadN = self.mcldll.MCL_SingleReadN
-        MCL_SingleReadN.argtypes = [ctypes.c_uint, ctypes.c_int]
-        MCL_SingleReadN.restype = ctypes.c_double
+    def get_position(self, i_axis, n=1):
 
-        self.position[i_axis] = MCL_SingleReadN(i_axis, self.handle) 
-        return self.position[i_axis]    
+        pos = []
+
+        for i_ in range(n):
+            pos.append(self.mcldll.MCL_SingleReadN(i_axis, self.handle))
+            time.sleep(0.001)
+        return np.mean(pos)    
     
-    def set_position(self, i_axis, new_position, tol=0.1):
-        MCL_SingleWriteN = self.mcldll.MCL_SingleWriteN
-        MCL_SingleWriteN.argtypes = [ctypes.c_double, ctypes.c_uint, ctypes.c_int]
-        MCL_SingleWriteN.restype = ctypes.c_int
-        if not 0 <= float(new_position) <= self.calibration[i_axis]:
+    def set_position(self, i_axis, new_position, n=1):
+
+        new_position_ = new_position + self.offsets[i_axis]
+
+        if not 0 <= float(new_position_) <= self.calibration[i_axis]:
             raise ValueError(f'Position must be between 0 and {self.calibration[i_axis]} μm')
         else:
-            err = MCL_SingleWriteN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+            err = self.mcldll.MCL_SingleWriteN(ctypes.c_double(new_position_), i_axis, self.handle)
             if err != 0:
                 log.info(f"Error: NanoDrive could not set position. Error Code: {err} = {self.mcl_error_codes[err]}")
-            while (abs(new_position - self.position[i_axis]) > tol):
+
+            i_while = 0
+            while (abs(new_position_ - self.position[i_axis]) > self.tolerance[i_axis]) and (i_while < 10):
                 time.sleep(0.01)
-                self.position[i_axis] = self.get_position(i_axis)
+                self.position[i_axis] = self.get_position(i_axis, n)
+                i_while += 1
+                if i_while > 10:
+                    log.warning(f"Error: NanoDrive could not achieve {new_position_} on {self.axis_mapping[i_axis]} after {i_while} attempts in set_position")
             
-            return err
+        return err
         
-    def set_verify_position(self, i_axis, new_position, tol=0.02):
-        MCL_MonitorN = self.mcldll.MCL_MonitorN
-        MCL_MonitorN.argtypes = [ctypes.c_double, ctypes.c_uint, ctypes.c_int]
-        MCL_MonitorN.restype = ctypes.c_double
-        if not 0 <= float(new_position) <= self.calibration[i_axis]:
+    def set_verify_position(self, i_axis, new_position, n=1):
+
+        new_position_ = new_position + self.offsets[i_axis]
+
+        if not 0 <= float(new_position_) <= self.calibration[i_axis]:
             raise ValueError(f'Position must be between 0 and {self.calibration[i_axis]} μm')
         else:
-            pos_err = MCL_MonitorN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+            pos_err = self.mcldll.MCL_MonitorN(ctypes.c_double(new_position_), i_axis, self.handle)
             if pos_err < 0:
                 log.warning(f"Error: NanoDrive could not set position. Error Code: {pos_err} = {self.mcl_error_codes[int(pos_err)]}")
                 return pos_err
             else:
                 self.position[i_axis] = pos_err
-                while (abs(new_position - pos_err) > tol):
-                    time.sleep(0.001)
-                    #print(f"new_position = {new_position}, pos_err = {pos_err}")
-                    pos_err = MCL_MonitorN(ctypes.c_double(new_position), ctypes.c_uint(i_axis), self.handle)
+                if n > 1:
+                    self.position[i_axis] = ((n-1)*self.get_position(i_axis, n) + pos_err)/n
+                
+                i_while = 0                    
+                while (abs(new_position_ - pos_err) > self.tolerance[i_axis]) and (i_while < 10):
+                    time.sleep(0.01)
+                    pos_err = self.mcldll.MCL_MonitorN(ctypes.c_double(new_position), i_axis, self.handle)
                     if pos_err < 0:
                         log.warning(f"Error: NanoDrive could not set position. Error Code: {pos_err} = {self.mcl_error_codes[int(pos_err)]}")
                         return pos_err
                     else:
                         self.position[i_axis] = pos_err
-                
-            
+                        if n > 1:
+                            self.position[i_axis] = ((n-1)*self.get_position(i_axis, n) + pos_err)/n
+                    i_while += 1
+                    if i_while > 10:
+                        log.warning(f"Error: NanoDrive could not achieve {new_position_} on {self.axis_mapping[i_axis]} after {i_while} attempts in set_verify_position")
+
+        return pos_err
 ################################################################
 
         
