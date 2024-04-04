@@ -123,9 +123,10 @@ class MCLnanoDrive(Instrument):
         for i_ in range(n):
             pos.append(self.mcldll.MCL_SingleReadN(i_axis, self.handle))
             time.sleep(0.001)
-        return np.mean(pos)    
+            self.position[i_axis] = np.mean(pos)
+        return self.position[i_axis]   
     
-    def set_position(self, i_axis, new_position, n=1):
+    def set_position(self, i_axis, new_position):
 
         new_position_ = new_position + self.offsets[i_axis]
 
@@ -136,13 +137,13 @@ class MCLnanoDrive(Instrument):
             if err != 0:
                 log.info(f"Error: NanoDrive could not set position. Error Code: {err} = {self.mcl_error_codes[err]}")
 
-            i_while = 0
-            while (abs(new_position_ - self.position[i_axis]) > self.tolerance[i_axis]) and (i_while < 10):
-                time.sleep(0.01)
-                self.position[i_axis] = self.get_position(i_axis, n)
-                i_while += 1
-                if i_while > 10:
-                    log.warning(f"Error: NanoDrive could not achieve {new_position_} on {self.axis_mapping[i_axis]} after {i_while} attempts in set_position")
+            # i_while = 0
+            # while (abs(new_position_ - self.position[i_axis]) > self.tolerance[i_axis]) and (i_while < 10):
+            #     time.sleep(0.01)
+            #     self.position[i_axis] = self.get_position(i_axis, n)
+            #     i_while += 1
+            #     if i_while > 10:
+            #         log.warning(f"Error: NanoDrive could not achieve {new_position_} on {self.axis_mapping[i_axis]} after {i_while} attempts in set_position")
             
         return err
         
