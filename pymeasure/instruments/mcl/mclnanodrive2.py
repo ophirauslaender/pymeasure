@@ -33,6 +33,8 @@ log.addHandler(logging.NullHandler())
 
 from pymeasure.instruments import Instrument
 
+# a test
+
 class ProductInfo(ctypes.Structure):
         _fields_ = [("axis_bitmap", ctypes.c_ubyte),
                     ("ADC_resolution", ctypes.c_short),
